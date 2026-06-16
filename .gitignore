@@ -1,0 +1,16 @@
+# Secrets and local config — never commit these.
+.env
+client_secret_*.json
+
+# SQLite database files.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Compiled binaries.
+/server
+/single-sign-on-auth
+
+# Editor/OS noise.
+.DS_Store

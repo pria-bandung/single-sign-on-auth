@@ -45,7 +45,7 @@ func (s *Store) CreateUser(ctx context.Context, u NewUser) (*User, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO users (email, password_hash, google_sub, name, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
-		u.Email, ptrToNull(u.PasswordHash), ptrToNull(u.GoogleSub), ptrToNull(u.Name), createdAt,
+		u.Email, ptrToNull(u.PasswordHash), ptrToNull(u.GoogleSub), ptrToNull(u.Name), formatTime(createdAt),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -76,17 +76,60 @@ func (s *Store) FindUserByEmail(ctx context.Context, email string) (*User, error
 	var (
 		u                             User
 		passwordHash, googleSub, name sql.NullString
+		createdAt                     string
 	)
-	if err := row.Scan(&u.ID, &u.Email, &passwordHash, &googleSub, &name, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &passwordHash, &googleSub, &name, &createdAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("scan user: %w", err)
 	}
+	created, err := parseTime(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse user created_at: %w", err)
+	}
+	u.CreatedAt = created
 	u.PasswordHash = nullToPtr(passwordHash)
 	u.GoogleSub = nullToPtr(googleSub)
 	u.Name = nullToPtr(name)
 	return &u, nil
+}
+
+// UpsertGoogleUser resolves a Google sign-in to a single account by email,
+// implementing the "lookup-or-create-or-link" rule:
+//
+//   - no user with that email      -> create a Google-only user (no password)
+//   - user exists without a sub     -> link the Google account onto it
+//   - user exists (already linked)  -> return it unchanged
+//
+// A name is filled in only when the existing account has none. The caller is
+// responsible for verifying the email before calling this (see the auth layer).
+func (s *Store) UpsertGoogleUser(ctx context.Context, email, sub, name string) (*User, error) {
+	existing, err := s.FindUserByEmail(ctx, email)
+	switch {
+	case err == nil:
+		if existing.GoogleSub == nil {
+			if _, err := s.db.ExecContext(ctx, `UPDATE users SET google_sub = ? WHERE id = ?`, sub, existing.ID); err != nil {
+				return nil, fmt.Errorf("link google account: %w", err)
+			}
+			existing.GoogleSub = &sub
+		}
+		if existing.Name == nil && name != "" {
+			if _, err := s.db.ExecContext(ctx, `UPDATE users SET name = ? WHERE id = ?`, name, existing.ID); err != nil {
+				return nil, fmt.Errorf("set name: %w", err)
+			}
+			existing.Name = &name
+		}
+		return existing, nil
+	case errors.Is(err, ErrNotFound):
+		var namePtr *string
+		if name != "" {
+			namePtr = &name
+		}
+		return s.CreateUser(ctx, NewUser{Email: email, GoogleSub: &sub, Name: namePtr})
+	default:
+		return nil, err
+	}
 }
 
 func ptrToNull(p *string) sql.NullString {
