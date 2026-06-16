@@ -23,7 +23,10 @@ func newTestServer(t *testing.T) (*web.Server, *store.Store) {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	srv, err := web.NewServer(st, web.Options{SessionTTL: time.Hour})
+	srv, err := web.NewServer(st, web.Options{
+		SessionTTL: time.Hour,
+		Google:     auth.NewGoogleOAuth("dummy-id", "dummy-secret", "http://localhost:8080/auth/google/callback"),
+	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -180,6 +183,35 @@ func TestLogoutClearsSessionAndCookie(t *testing.T) {
 	prec := get(srv, "/protected", c)
 	if prec.Code == http.StatusOK {
 		t.Error("protected page still accessible after logout")
+	}
+}
+
+func TestGoogleAuthRedirectsAndSetsStateCookie(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := get(srv, "/auth/google")
+
+	if rec.Code != http.StatusFound && rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want a redirect", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "accounts.google.com") {
+		t.Errorf("Location = %q, want a redirect to Google", loc)
+	}
+	if !strings.Contains(loc, "state=") {
+		t.Errorf("Location = %q, missing state param", loc)
+	}
+
+	var stateCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "oauth_state" {
+			stateCookie = c
+		}
+	}
+	if stateCookie == nil || stateCookie.Value == "" {
+		t.Fatal("oauth_state cookie was not set")
+	}
+	if !stateCookie.HttpOnly {
+		t.Error("oauth_state cookie is not HttpOnly")
 	}
 }
 

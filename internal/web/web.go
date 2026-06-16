@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pria-bandung/single-sign-on-auth/internal/auth"
 	"github.com/pria-bandung/single-sign-on-auth/internal/store"
 )
 
@@ -24,9 +25,10 @@ const sessionCookieName = "session"
 
 // Options configures a Server. Zero values fall back to sane defaults.
 type Options struct {
-	CookieSecure bool             // sets the Secure flag on the session cookie
-	SessionTTL   time.Duration    // session lifetime; defaults to 24h
-	Now          func() time.Time // injectable clock for tests; defaults to time.Now
+	CookieSecure bool              // sets the Secure flag on the session cookie
+	SessionTTL   time.Duration     // session lifetime; defaults to 24h
+	Now          func() time.Time  // injectable clock for tests; defaults to time.Now
+	Google       *auth.GoogleOAuth // the "Sign in with Google" client
 }
 
 // Server holds parsed templates, the store, and the HTTP router. It implements
@@ -35,6 +37,7 @@ type Server struct {
 	mux          *http.ServeMux
 	templates    map[string]*template.Template
 	store        *store.Store
+	google       *auth.GoogleOAuth
 	cookieSecure bool
 	sessionTTL   time.Duration
 	now          func() time.Time
@@ -65,6 +68,7 @@ func NewServer(st *store.Store, opts Options) (*Server, error) {
 		mux:          http.NewServeMux(),
 		templates:    templates,
 		store:        st,
+		google:       opts.Google,
 		cookieSecure: opts.CookieSecure,
 		sessionTTL:   ttl,
 		now:          now,
@@ -86,6 +90,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /signup", s.handleSignup)
 	s.mux.HandleFunc("GET /protected", s.requireUser(s.handleProtected))
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /auth/google", s.handleGoogleAuth)
+	s.mux.HandleFunc("GET /auth/google/callback", s.handleGoogleCallback)
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {

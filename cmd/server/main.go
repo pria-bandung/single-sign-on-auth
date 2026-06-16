@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pria-bandung/single-sign-on-auth/internal/auth"
 	"github.com/pria-bandung/single-sign-on-auth/internal/config"
 	"github.com/pria-bandung/single-sign-on-auth/internal/store"
 	"github.com/pria-bandung/single-sign-on-auth/internal/web"
@@ -25,9 +26,11 @@ func main() {
 	}
 	defer db.Close()
 
+	google := auth.NewGoogleOAuth(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURL)
 	srv, err := web.NewServer(db, web.Options{
 		CookieSecure: cfg.CookieSecure,
 		SessionTTL:   24 * time.Hour,
+		Google:       google,
 	})
 	if err != nil {
 		log.Fatalf("web server error: %v", err)
