@@ -1,0 +1,11 @@
+{{define "content"}}
+<h1>SSO Auth Demo</h1>
+{{if .Authenticated}}
+  <p>Welcome, {{.Email}}.</p>
+  <p><a href="/protected">Go to the protected page</a></p>
+  <form method="post" action="/logout"><button type="submit">Log out</button></form>
+{{else}}
+  <p>You are not logged in.</p>
+  <p><a href="/login">Log in</a> or <a href="/signup">Sign up</a></p>
+{{end}}
+{{end}}
