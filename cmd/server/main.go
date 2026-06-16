@@ -6,6 +6,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/pria-bandung/single-sign-on-auth/internal/config"
 	"github.com/pria-bandung/single-sign-on-auth/internal/store"
@@ -24,7 +25,10 @@ func main() {
 	}
 	defer db.Close()
 
-	srv, err := web.NewServer()
+	srv, err := web.NewServer(db, web.Options{
+		CookieSecure: cfg.CookieSecure,
+		SessionTTL:   24 * time.Hour,
+	})
 	if err != nil {
 		log.Fatalf("web server error: %v", err)
 	}
