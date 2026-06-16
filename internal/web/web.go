@@ -18,7 +18,7 @@ var templateFS embed.FS
 
 // pages lists the page templates that are composed with the shared layout. Each
 // page template defines a "content" block.
-var pages = []string{"home", "signup", "protected"}
+var pages = []string{"home", "login", "signup", "protected"}
 
 const sessionCookieName = "session"
 
@@ -80,6 +80,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
+	s.mux.HandleFunc("GET /login", s.handleLoginForm)
+	s.mux.HandleFunc("POST /login", s.handleLogin)
 	s.mux.HandleFunc("GET /signup", s.handleSignupForm)
 	s.mux.HandleFunc("POST /signup", s.handleSignup)
 	s.mux.HandleFunc("GET /protected", s.requireUser(s.handleProtected))

@@ -183,6 +183,105 @@ func TestLogoutClearsSessionAndCookie(t *testing.T) {
 	}
 }
 
+func seedPasswordUser(t *testing.T, st *store.Store, email, password string) {
+	t.Helper()
+	h, err := auth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if _, err := st.CreateUser(context.Background(), store.NewUser{Email: email, PasswordHash: &h}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+}
+
+func TestLoginFormRenders(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := get(srv, "/login")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /login status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="email"`) || !strings.Contains(body, `name="password"`) {
+		t.Errorf("login form is missing email/password fields:\n%s", body)
+	}
+}
+
+func TestLoginSuccessRedirectsAndGrantsAccess(t *testing.T) {
+	srv, st := newTestServer(t)
+	seedPasswordUser(t, st, "user@example.com", "supersecret")
+
+	rec := postForm(srv, "/login", url.Values{
+		"email": {"user@example.com"}, "password": {"supersecret"}, "next": {"/protected"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("login status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/protected" {
+		t.Errorf("Location = %q, want /protected", loc)
+	}
+	c := sessionCookie(t, rec)
+	if prec := get(srv, "/protected", c); prec.Code != http.StatusOK {
+		t.Errorf("protected status after login = %d, want 200", prec.Code)
+	}
+}
+
+func TestLoginWrongPasswordShowsGenericError(t *testing.T) {
+	srv, st := newTestServer(t)
+	seedPasswordUser(t, st, "user@example.com", "supersecret")
+
+	rec := postForm(srv, "/login", url.Values{"email": {"user@example.com"}, "password": {"wrong"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (re-render)", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(strings.ToLower(body), "invalid email or password") {
+		t.Errorf("missing generic error:\n%s", body)
+	}
+	if !strings.Contains(body, "user@example.com") {
+		t.Error("typed email was not preserved")
+	}
+	for _, cc := range rec.Result().Cookies() {
+		if cc.Name == "session" && cc.Value != "" {
+			t.Error("a session cookie was set on a failed login")
+		}
+	}
+}
+
+func TestLoginUnknownEmailShowsSameGenericError(t *testing.T) {
+	srv, _ := newTestServer(t)
+	rec := postForm(srv, "/login", url.Values{"email": {"ghost@example.com"}, "password": {"whatever"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(strings.ToLower(rec.Body.String()), "invalid email or password") {
+		t.Errorf("unknown email should produce the same generic error:\n%s", rec.Body.String())
+	}
+}
+
+func TestLoginRejectsExternalNext(t *testing.T) {
+	srv, st := newTestServer(t)
+	seedPasswordUser(t, st, "user@example.com", "supersecret")
+
+	rec := postForm(srv, "/login", url.Values{
+		"email": {"user@example.com"}, "password": {"supersecret"}, "next": {"https://evil.com"},
+	})
+	if loc := rec.Header().Get("Location"); loc != "/protected" {
+		t.Errorf("external next not rejected; Location = %q, want /protected", loc)
+	}
+}
+
+func TestLoginHonorsValidNext(t *testing.T) {
+	srv, st := newTestServer(t)
+	seedPasswordUser(t, st, "user@example.com", "supersecret")
+
+	rec := postForm(srv, "/login", url.Values{
+		"email": {"user@example.com"}, "password": {"supersecret"}, "next": {"/settings/profile"},
+	})
+	if loc := rec.Header().Get("Location"); loc != "/settings/profile" {
+		t.Errorf("Location = %q, want /settings/profile", loc)
+	}
+}
+
 func TestHomeShowsWelcomeWhenAuthenticated(t *testing.T) {
 	srv, _ := newTestServer(t)
 	signup := postForm(srv, "/signup", url.Values{"email": {"me@example.com"}, "password": {"longenough"}})
