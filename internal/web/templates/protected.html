@@ -1,0 +1,5 @@
+{{define "content"}}
+<h1>Protected page</h1>
+<p>This is a protected page. You can only see it because you are logged in as {{.Email}}.</p>
+<form method="post" action="/logout"><button type="submit">Log out</button></form>
+{{end}}

@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"time"
+
+	"github.com/pria-bandung/single-sign-on-auth/internal/store"
 )
 
 //go:embed templates/*.html
@@ -15,12 +18,26 @@ var templateFS embed.FS
 
 // pages lists the page templates that are composed with the shared layout. Each
 // page template defines a "content" block.
-var pages = []string{"home"}
+var pages = []string{"home", "signup", "protected"}
 
-// Server holds parsed templates and the HTTP router. It implements http.Handler.
+const sessionCookieName = "session"
+
+// Options configures a Server. Zero values fall back to sane defaults.
+type Options struct {
+	CookieSecure bool             // sets the Secure flag on the session cookie
+	SessionTTL   time.Duration    // session lifetime; defaults to 24h
+	Now          func() time.Time // injectable clock for tests; defaults to time.Now
+}
+
+// Server holds parsed templates, the store, and the HTTP router. It implements
+// http.Handler.
 type Server struct {
-	mux       *http.ServeMux
-	templates map[string]*template.Template
+	mux          *http.ServeMux
+	templates    map[string]*template.Template
+	store        *store.Store
+	cookieSecure bool
+	sessionTTL   time.Duration
+	now          func() time.Time
 }
 
 // pageData is the view model passed to every page render.
@@ -29,16 +46,28 @@ type pageData struct {
 	Email         string
 }
 
-// NewServer parses templates once and registers routes. It returns an error if
-// any template fails to parse.
-func NewServer() (*Server, error) {
+// NewServer parses templates once, stores its dependencies, and registers
+// routes. It returns an error if any template fails to parse.
+func NewServer(st *store.Store, opts Options) (*Server, error) {
 	templates, err := parseTemplates()
 	if err != nil {
 		return nil, err
 	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	ttl := opts.SessionTTL
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
 	s := &Server{
-		mux:       http.NewServeMux(),
-		templates: templates,
+		mux:          http.NewServeMux(),
+		templates:    templates,
+		store:        st,
+		cookieSecure: opts.CookieSecure,
+		sessionTTL:   ttl,
+		now:          now,
 	}
 	s.routes()
 	return s, nil
@@ -51,11 +80,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
+	s.mux.HandleFunc("GET /signup", s.handleSignupForm)
+	s.mux.HandleFunc("POST /signup", s.handleSignup)
+	s.mux.HandleFunc("GET /protected", s.requireUser(s.handleProtected))
+	s.mux.HandleFunc("POST /logout", s.handleLogout)
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	// Slice 1: no sessions yet, so the home page always renders logged-out.
+	if u, ok := s.currentUser(r); ok {
+		s.render(w, "home", pageData{Authenticated: true, Email: u.Email})
+		return
+	}
 	s.render(w, "home", pageData{Authenticated: false})
+}
+
+func (s *Server) handleProtected(w http.ResponseWriter, r *http.Request, u *store.User) {
+	s.render(w, "protected", pageData{Authenticated: true, Email: u.Email})
 }
 
 // render executes the named page (composed with the layout) into a buffer first,
